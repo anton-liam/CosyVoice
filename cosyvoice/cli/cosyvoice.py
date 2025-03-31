@@ -23,6 +23,8 @@ from cosyvoice.cli.model import CosyVoiceModel, CosyVoice2Model
 from cosyvoice.utils.file_utils import logging
 from cosyvoice.utils.class_utils import get_model_type
 
+from pathlib import Path
+
 
 class CosyVoice:
 
@@ -164,6 +166,88 @@ class CosyVoice2(CosyVoice):
         assert isinstance(self.model, CosyVoice2Model), 'inference_instruct2 is only implemented for CosyVoice2!'
         for i in tqdm(self.frontend.text_normalize(tts_text, split=True, text_frontend=text_frontend)):
             model_input = self.frontend.frontend_instruct2(i, instruct_text, prompt_speech_16k, self.sample_rate)
+            start_time = time.time()
+            logging.info('synthesis text {}'.format(i))
+            for model_output in self.model.tts(**model_input, stream=stream, speed=speed):
+                speech_len = model_output['tts_speech'].shape[1] / self.sample_rate
+                logging.info('yield speech len {}, rtf {}'.format(speech_len, (time.time() - start_time) / speech_len))
+                yield model_output
+                start_time = time.time()
+
+
+class CosyVoice2Web(CosyVoice):
+
+    def __init__(self, model_dir, spk_dir, load_jit=False, load_trt=False, fp16=False):
+        self.spk_dir = spk_dir
+
+        self.instruct = True if '-Instruct' in model_dir else False
+        self.model_dir = model_dir
+        self.fp16 = fp16
+        if not os.path.exists(model_dir):
+            model_dir = snapshot_download(model_dir)
+        with open('{}/cosyvoice.yaml'.format(model_dir), 'r') as f:
+            configs = load_hyperpyyaml(f, overrides={'qwen_pretrain_path': os.path.join(model_dir, 'CosyVoice-BlankEN')})
+        assert get_model_type(configs) == CosyVoice2Model, 'do not use {} for CosyVoice2 initialization!'.format(model_dir)
+        self.frontend = CosyVoiceFrontEnd(configs['get_tokenizer'],
+                                          configs['feat_extractor'],
+                                          '{}/campplus.onnx'.format(model_dir),
+                                          '{}/speech_tokenizer_v2.onnx'.format(model_dir),
+                                          '{}/spk2info.pt'.format(model_dir),
+                                          configs['allowed_special'])
+        self.sample_rate = configs['sample_rate']
+        if torch.cuda.is_available() is False and (load_jit is True or load_trt is True or fp16 is True):
+            load_jit, load_trt, fp16 = False, False, False
+            logging.warning('no cuda device, set load_jit/load_trt/fp16 to False')
+        self.model = CosyVoice2Model(configs['llm'], configs['flow'], configs['hift'], fp16)
+        self.model.load('{}/llm.pt'.format(model_dir),
+                        '{}/flow.pt'.format(model_dir),
+                        '{}/hift.pt'.format(model_dir))
+        if load_jit:
+            self.model.load_jit('{}/flow.encoder.{}.zip'.format(model_dir, 'fp16' if self.fp16 is True else 'fp32'))
+        if load_trt:
+            self.model.load_trt('{}/flow.decoder.estimator.{}.mygpu.plan'.format(model_dir, 'fp16' if self.fp16 is True else 'fp32'),
+                                '{}/flow.decoder.estimator.fp32.onnx'.format(model_dir),
+                                self.fp16)
+        del configs
+
+    def remove_spk(self, name):
+        file_path = Path(f"{self.spk_dir}/{name}.pt")
+        if file_path.exists():
+            file_path.unlink()
+
+    def create_zero_shot_spk(self, prompt_text, prompt_speech_16k, name, tts_text="我是通义实验室语音团队全新推出的生成式语音大模型",  stream=False, speed=1.0, text_frontend=True):
+        prompt_text = self.frontend.text_normalize(prompt_text, split=False, text_frontend=text_frontend)
+        model_input = self.frontend.frontend_zero_shot(tts_text, prompt_text, prompt_speech_16k, self.sample_rate)
+        model_input['audio_ref'] = prompt_speech_16k
+        model_input['text_ref'] = prompt_text
+        torch.save(model_input, f"{self.spk_dir}/{name}.pt")
+
+    def inference_sft_by_spk(self, tts_text, spk_id, stream=False, speed=1.0, text_frontend=True):
+        default_voices = self.list_available_spks()
+        for i in tqdm(self.frontend.text_normalize(tts_text, split=True, text_frontend=text_frontend)):
+            # 根据音色ID获取模型输入
+            spk = default_voices[0] if spk_id not in default_voices else spk_id
+            model_input = self.frontend.frontend_sft(i, spk)
+
+            # 如果是自定义音色,加载并更新音色相关特征
+            if spk_id not in default_voices:
+                newspk = torch.load(
+                    f'{self.spk_dir}/{spk_id}.pt',
+                    map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                )
+                
+                # 更新模型输入中的音色特征
+                spk_fields = [
+                    "flow_embedding", "llm_embedding",
+                    "llm_prompt_speech_token", "llm_prompt_speech_token_len",
+                    "flow_prompt_speech_token", "flow_prompt_speech_token_len", 
+                    "prompt_speech_feat_len", "prompt_speech_feat",
+                    "prompt_text", "prompt_text_len"
+                ]
+                
+                for field in spk_fields:
+                    model_input[field] = newspk[field]
+
             start_time = time.time()
             logging.info('synthesis text {}'.format(i))
             for model_output in self.model.tts(**model_input, stream=stream, speed=speed):

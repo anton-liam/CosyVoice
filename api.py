@@ -29,7 +29,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"])
 
-
 def process_audio(tts_speeches, sample_rate=24000, format="wav"):
     """处理音频数据并返回响应"""
     buffer = io.BytesIO()
@@ -54,9 +53,8 @@ def process_audio(tts_speeches, sample_rate=24000, format="wav"):
 
 
 @app.get("/tts")
-async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0):
+async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, format:str = "wav"):
     model_output = lambda: cosyvoice.inference_sft_by_spk(tts_text, spk_id, speed=speed)
-    format = 'wav'
     
     def generate():
         for _, i in enumerate(model_output()):

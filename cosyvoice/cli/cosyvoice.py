@@ -231,8 +231,14 @@ class CosyVoice2Web(CosyVoice):
 
             # 如果是自定义音色,加载并更新音色相关特征
             if spk_id not in default_voices:
+                spk_file = f'{self.spk_dir}/{spk_id}.pt'
+
+                file_path = Path(spk_file)
+                if not file_path.exists():
+                    raise ValueError('Speaker is not exists')
+
                 newspk = torch.load(
-                    f'{self.spk_dir}/{spk_id}.pt',
+                    spk_file,
                     map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
                 )
                 

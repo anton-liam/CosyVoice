@@ -51,6 +51,11 @@ def process_audio(tts_speeches, sample_rate=24000, format="wav"):
     buffer.seek(0)
     return buffer
 
+@app.get("/ping")
+async def create_zero_shot_spk():
+   return {
+       "status": 'active'
+   }
 
 @app.get("/tts")
 async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, format:str = "wav"):

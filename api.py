@@ -23,6 +23,7 @@ import torch
 import torchaudio
 
 import uuid
+import hashlib
 
 app = FastAPI()
 # set cross region allowance
@@ -64,7 +65,7 @@ async def create_zero_shot_spk():
    }
 
 @app.get("/tts")
-async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, format:str = "wav", stream: bool = True):
+def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, format:str = "wav", stream: bool = True):
     model_output = lambda: cosyvoice.inference_sft_by_spk(tts_text, spk_id, speed=speed)
 
     def generate():
@@ -77,7 +78,8 @@ async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, f
         year = now.strftime("%Y")
         month = now.strftime("%m")
         day = now.strftime("%d")
-        filename = os.path.join('voices', f"{year}-{month}-{day}", spk_id, f"{uuid.uuid4()}.{format}")
+        speaker = hashlib.md5(spk_id.encode("utf-8")).hexdigest()
+        filename = os.path.join('voices', f"{year}-{month}-{day}", speaker, f"{uuid.uuid4()}.{format}")
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, "ab") as f:
             for chunk in generate():
@@ -114,7 +116,7 @@ async def create_zero_shot_spk():
     return speakers
 
 @app.post("/speakers")
-async def create_zero_shot_spk(name:str = Form(), prompt_text: str = Form(), prompt_wav: UploadFile = File()):
+def create_zero_shot_spk(name:str = Form(), prompt_text: str = Form(), prompt_wav: UploadFile = File()):
     id = f"{uuid.uuid4()}_{name}" 
     cosyvoice.create_zero_shot_spk(prompt_text, prompt_wav.file, id)
     return {

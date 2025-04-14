@@ -237,7 +237,7 @@ class CosyVoice2Web(CosyVoice):
 
         torch.save(model_input, f"{self.spk_dir}/{name}/speaker.pt")
 
-    def inference_sft_by_spk(self, tts_text, spk_id, stream=True, speed=1.0, text_frontend=True):
+    def inference_sft_by_spk(self, tts_text, spk_id, stream=False, speed=1.0, text_frontend=True):
         default_voices = self.list_available_spks()
         for i in tqdm(self.frontend.text_normalize(tts_text, split=True, text_frontend=text_frontend)):
             # 根据音色ID获取模型输入

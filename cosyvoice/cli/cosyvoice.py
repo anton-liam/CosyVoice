@@ -24,6 +24,8 @@ from cosyvoice.utils.file_utils import logging
 from cosyvoice.utils.class_utils import get_model_type
 
 from pathlib import Path
+from cosyvoice.utils.file_utils import load_wav
+import shutil
 
 
 class CosyVoice:
@@ -211,18 +213,31 @@ class CosyVoice2Web(CosyVoice):
         del configs
 
     def remove_spk(self, name):
-        file_path = Path(f"{self.spk_dir}/{name}.pt")
+        file_path = Path(f"{self.spk_dir}/{name}")
         if file_path.exists():
             file_path.unlink()
 
-    def create_zero_shot_spk(self, prompt_text, prompt_speech_16k, name, tts_text="我是通义实验室语音团队全新推出的生成式语音大模型",  stream=False, speed=1.0, text_frontend=True):
+    def create_zero_shot_spk(self, prompt_text, prompt_wav, name, tts_text="我是通义实验室语音团队全新推出的生成式语音大模型",  stream=False, speed=1.0, text_frontend=True):
+        prompt_speech_16k = load_wav(prompt_wav, 16000)
         prompt_text = self.frontend.text_normalize(prompt_text, split=False, text_frontend=text_frontend)
         model_input = self.frontend.frontend_zero_shot(tts_text, prompt_text, prompt_speech_16k, self.sample_rate)
         model_input['audio_ref'] = prompt_speech_16k
         model_input['text_ref'] = prompt_text
-        torch.save(model_input, f"{self.spk_dir}/{name}.pt")
 
-    def inference_sft_by_spk(self, tts_text, spk_id, stream=False, speed=1.0, text_frontend=True):
+        basepath = f"{self.spk_dir}/{name}"
+        os.makedirs(basepath, exist_ok=True)
+
+        wav_file = f"{self.spk_dir}/{name}/prompt.wav"
+        with open(wav_file, "wb") as f:
+            shutil.copyfileobj(prompt_wav, f)
+
+        prompt_file = f"{self.spk_dir}/{name}/prompt.text"
+        with open(prompt_file, "w", encoding="utf-8") as f:
+            f.write(prompt_text)
+
+        torch.save(model_input, f"{self.spk_dir}/{name}/speaker.pt")
+
+    def inference_sft_by_spk(self, tts_text, spk_id, stream=True, speed=1.0, text_frontend=True):
         default_voices = self.list_available_spks()
         for i in tqdm(self.frontend.text_normalize(tts_text, split=True, text_frontend=text_frontend)):
             # 根据音色ID获取模型输入
@@ -231,7 +246,7 @@ class CosyVoice2Web(CosyVoice):
 
             # 如果是自定义音色,加载并更新音色相关特征
             if spk_id not in default_voices:
-                spk_file = f'{self.spk_dir}/{spk_id}.pt'
+                spk_file = f'{self.spk_dir}/{spk_id}/speaker.pt'
 
                 file_path = Path(spk_file)
                 if not file_path.exists():

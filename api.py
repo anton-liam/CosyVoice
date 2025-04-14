@@ -7,6 +7,7 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 from fastapi import FastAPI, UploadFile, Form, File
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import numpy as np
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +15,9 @@ sys.path.append('{}/'.format(ROOT_DIR))
 sys.path.append('{}/third_party/Matcha-TTS'.format(ROOT_DIR))
 from cosyvoice.cli.cosyvoice import CosyVoice, CosyVoice2, CosyVoice2Web
 from cosyvoice.utils.file_utils import load_wav
+from datetime import datetime
+
+from pathlib import Path
 
 import torch
 import torchaudio
@@ -51,6 +55,8 @@ def process_audio(tts_speeches, sample_rate=24000, format="wav"):
     buffer.seek(0)
     return buffer
 
+app.mount('/voices', StaticFiles(directory="voices"), name="voices")
+
 @app.get("/ping")
 async def create_zero_shot_spk():
    return {
@@ -58,24 +64,59 @@ async def create_zero_shot_spk():
    }
 
 @app.get("/tts")
-async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, format:str = "wav"):
+async def inference_sft_by_spk(tts_text: str, spk_id: str, speed: float = 1.0, format:str = "wav", stream: bool = True):
     model_output = lambda: cosyvoice.inference_sft_by_spk(tts_text, spk_id, speed=speed)
-    
+
     def generate():
         for _, i in enumerate(model_output()):
             buffer = process_audio([i['tts_speech']], format=format)
             yield buffer.read()
 
+    if not stream:
+        now = datetime.now()
+        year = now.strftime("%Y")
+        month = now.strftime("%m")
+        day = now.strftime("%d")
+        filename = os.path.join('voices', f"{year}-{month}-{day}", spk_id, f"{uuid.uuid4()}.{format}")
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "ab") as f:
+            for chunk in generate():
+                f.write(chunk)  # 每个 chunk 是 buffer.read()，即 bytes
+                
+        return {
+            "url": filename,
+            "path": filename
+        }
+   
+
     return StreamingResponse(generate(), media_type=f"audio/{format}", headers={
         "Content-Type": f"audio/{format}" ,
     })
 
+@app.get("/speakers")
+async def create_zero_shot_spk():
+    path = Path(cosyvoice.spk_dir)
+    speakers = []
+    for speaker in path.iterdir():
+        if speaker.is_dir():
+            basepath = speaker.resolve()
+            file = Path(f"{basepath}/speaker.pt")
+            if file.exists():
+                stat = file.stat()
+                created_time = datetime.fromtimestamp(stat.st_ctime)
+                parts = speaker.stem.split('_')
+                speakers.append({
+                    "id": speaker.stem,
+                    "name": parts[1] if len(parts) >= 2 else parts[0],
+                    "path": file.resolve(),
+                    "created": created_time.isoformat(),  # or str(created_time)
+                })
+    return speakers
 
 @app.post("/speakers")
 async def create_zero_shot_spk(name:str = Form(), prompt_text: str = Form(), prompt_wav: UploadFile = File()):
     id = f"{uuid.uuid4()}_{name}" 
-    prompt_speech_16k = load_wav(prompt_wav.file, 16000)
-    cosyvoice.create_zero_shot_spk(prompt_text, prompt_speech_16k, id)
+    cosyvoice.create_zero_shot_spk(prompt_text, prompt_wav.file, id)
     return {
         "id": id
     }

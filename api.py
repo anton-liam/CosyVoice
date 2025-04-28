@@ -143,7 +143,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     try:
-        cosyvoice = CosyVoice2Web(args.model_dir, args.speaker_dir)
+        cosyvoice = CosyVoice2Web(args.model_dir, args.speaker_dir, load_trt=True)
     except Exception:
         raise TypeError('no valid model_type!')
     uvicorn.run(app, host="0.0.0.0", port=args.port)
